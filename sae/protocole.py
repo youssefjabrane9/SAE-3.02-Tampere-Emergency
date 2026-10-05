@@ -71,7 +71,7 @@ def encoder(message):
 
     Indice : json.dumps(...), puis ajouter "\\n", puis .encode("utf-8").
     """
-    raise NotImplementedError
+    return (json.dumps(message) + "\n").encode("utf-8")
 
 
 def decoder(ligne):
@@ -80,7 +80,10 @@ def decoder(ligne):
     Doit lever ValueError si ce n'est pas un dict ou s'il n'y a pas de clé "type".
     Indice : .decode("utf-8"), puis json.loads(...), puis vérifier.
     """
-    raise NotImplementedError
+    message = json.loads(ligne.decode("utf-8"))
+    if not isinstance(message, dict) or "type" not in message:
+        raise ValueError("message invalide : il faut un dict avec une clé \"type\"")
+    return message
 
 
 class Deframeur:
@@ -102,4 +105,9 @@ class Deframeur:
         pour le prochain appel.
         Indice : tant que b"\\n" est dans le tampon, couper avec .split(b"\\n", 1).
         """
-        raise NotImplementedError
+        self.tampon += octets
+        messages = []
+        while b"\n" in self.tampon:
+            ligne, self.tampon = self.tampon.split(b"\n", 1)
+            messages.append(decoder(ligne))
+        return messages
