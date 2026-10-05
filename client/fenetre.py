@@ -3,18 +3,16 @@
 La fenêtre ne connaît que des messages du protocole (des dict) :
 - elle en reçoit par traiter_message() : "CITY", "ROUTE", "ERROR" ;
 - elle en envoie par self.reseau.envoyer() : "GET_CITY", "COMPUTE_ROUTE".
-Sans réseau (reseau=None, prototype de l'étape 4), elle utilise les exemples de protocole.py.
 """
 
 from PyQt6.QtWidgets import (QComboBox, QFormLayout, QHBoxLayout, QLabel, QMainWindow,
                              QPushButton, QSpinBox, QWidget)
 
 from client.carte import CarteVille
-from sae.protocole import EXEMPLE_CITY, EXEMPLE_ROUTE
 
 
 class FenetrePrincipale(QMainWindow):
-    def __init__(self, reseau=None):
+    def __init__(self, reseau):
         super().__init__()
         self.setWindowTitle("SAÉ 3.02 — Véhicules prioritaires")
         self.reseau = reseau
@@ -51,18 +49,14 @@ class FenetrePrincipale(QMainWindow):
 
         self.bouton_calculer.clicked.connect(self.calculer)
 
-        # --- Réseau (étape 5) ---
-        if self.reseau is None:
-            self.statusBar().showMessage("Mode hors ligne (exemples de protocole.py)")
-            self.traiter_message(EXEMPLE_CITY)
-        else:
-            # Connecter les signaux AVANT start(), sinon on peut rater "connecte".
-            self.reseau.connecte.connect(self.quand_connecte)
-            self.reseau.message_recu.connect(self.traiter_message)
-            self.reseau.erreur.connect(self.afficher_erreur)
-            self.reseau.finished.connect(self.quand_deconnecte)   # signal fourni par QThread
-            self.statusBar().showMessage(f"Connexion à {self.reseau.hote}:{self.reseau.port}…")
-            self.reseau.start()
+        # --- Réseau ---
+        # Connecter les signaux AVANT start(), sinon on peut rater "connecte".
+        self.reseau.connecte.connect(self.quand_connecte)
+        self.reseau.message_recu.connect(self.traiter_message)
+        self.reseau.erreur.connect(self.afficher_erreur)
+        self.reseau.finished.connect(self.quand_deconnecte)   # signal fourni par QThread
+        self.statusBar().showMessage(f"Connexion à {self.reseau.hote}:{self.reseau.port}…")
+        self.reseau.start()
 
     # --- Messages reçus ---
 
@@ -108,9 +102,6 @@ class FenetrePrincipale(QMainWindow):
     # --- Actions de l'utilisateur ---
 
     def calculer(self):
-        if self.reseau is None:
-            self.traiter_message(EXEMPLE_ROUTE)     # étape 4 : pas de serveur, trajet d'exemple
-            return
         self.reseau.envoyer({
             "type": "COMPUTE_ROUTE",
             "depart": self.choix_depart.currentText(),
@@ -120,7 +111,6 @@ class FenetrePrincipale(QMainWindow):
 
     def closeEvent(self, event):
         """À la fermeture : arrêter proprement le thread réseau avant de quitter."""
-        if self.reseau is not None:
-            self.reseau.arreter()
-            self.reseau.wait()
+        self.reseau.arreter()
+        self.reseau.wait()
         super().closeEvent(event)

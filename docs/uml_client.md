@@ -76,11 +76,10 @@ classDiagram
     QThread <|-- ClientReseau
 
     FenetrePrincipale *-- CarteVille : contient
-    FenetrePrincipale o-- "0..1" ClientReseau : utilise (None = hors ligne)
+    FenetrePrincipale o-- "1" ClientReseau : utilise
     ClientReseau ..> Deframeur : crée dans run()
     ClientReseau ..> protocole : encoder()
     Deframeur ..> protocole : decoder()
-    FenetrePrincipale ..> protocole : EXEMPLE_CITY / EXEMPLE_ROUTE
     lancer_client ..> FenetrePrincipale : crée
     lancer_client ..> ClientReseau : crée
 ```

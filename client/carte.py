@@ -78,20 +78,3 @@ class CarteVille(QGraphicsView):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.ajuster()
-
-
-# Test rapide sans réseau, depuis la racine du projet :  python -m client.carte
-if __name__ == "__main__":
-    import sys
-
-    from PyQt6.QtWidgets import QApplication
-
-    from sae.protocole import EXEMPLE_CITY, EXEMPLE_ROUTE
-
-    app = QApplication(sys.argv)
-    carte = CarteVille()
-    carte.charger_ville(EXEMPLE_CITY)
-    carte.afficher_trajet(EXEMPLE_ROUTE)
-    carte.resize(600, 600)
-    carte.show()
-    sys.exit(app.exec())
