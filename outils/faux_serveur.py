@@ -2,61 +2,78 @@
 
     python -m outils.faux_serveur
 
-Ville 3 x 3 (A1 à C3, 100 m entre deux carrefours). Le trajet est un simple parcours en
-largeur (le moins de carrefours), pas le vrai calcul de Youssef. Plusieurs clients possibles.
+Ville : le vrai réseau de rues de Colmar, lu dans assets/colmar.json (fait par
+outils/extraire_osm.py). Le trajet est le plus court en distance (Dijkstra simple),
+sans trafic ni sens uniques : ce n'est pas le vrai calcul de Youssef. Plusieurs clients possibles.
 """
 
+import json
+import os
 import select
 import socket
+from pathlib import Path
 
 from sae.protocole import PORT_TCP, Deframeur, encoder
 
-COLONNES = "ABC"
-LIGNES = range(1, 4)
-ECART = 100          # mètres entre deux carrefours
 VITESSE = 13.9       # m/s (50 km/h)
 
-NOEUDS = {f"{c}{l}": [i * ECART, (l - 1) * ECART] for i, c in enumerate(COLONNES) for l in LIGNES}
-ROUTES = ([[f"{c}{l}", f"{c}{l + 1}", ECART] for c in COLONNES for l in LIGNES if l < len(LIGNES)]
-          + [[f"{a}{l}", f"{b}{l}", ECART] for a, b in zip(COLONNES, COLONNES[1:]) for l in LIGNES])
+VILLE = json.loads((Path(__file__).parent.parent / "assets" / "colmar.json").read_text(encoding="utf-8"))
+NOEUDS = VILLE["noeuds"]
+ROUTES = VILLE["routes"]
+LIEUX = VILLE["lieux"]
+RUES = VILLE["rues"]
+
+VOISINS = {n: [] for n in NOEUDS}          # noeud -> [(voisin, longueur), ...]
+for a, b, longueur in ROUTES:
+    VOISINS[a].append((b, longueur))
+    VOISINS[b].append((a, longueur))
 
 
 def chemin_le_plus_court(depart, arrivee):
-    voisins = {nom: [] for nom in NOEUDS}
-    for a, b, _ in ROUTES:
-        voisins[a].append(b)
-        voisins[b].append(a)
+    """Dijkstra : on agrandit petit à petit la zone des noeuds dont on connaît la distance."""
+    distance = {depart: 0}
     precedent = {depart: None}
-    a_visiter = [depart]
-    while a_visiter:
-        noeud = a_visiter.pop(0)
-        for v in voisins[noeud]:
-            if v not in precedent:
-                precedent[v] = noeud
-                a_visiter.append(v)
+    a_traiter = {depart}
+    while a_traiter:
+        noeud = min(a_traiter, key=lambda n: distance[n])   # le plus proche pas encore traité
+        a_traiter.remove(noeud)
+        if noeud == arrivee:
+            break
+        for voisin, longueur in VOISINS[noeud]:
+            nouvelle = distance[noeud] + longueur
+            if voisin not in distance or nouvelle < distance[voisin]:
+                distance[voisin] = nouvelle
+                precedent[voisin] = noeud
+                a_traiter.add(voisin)
+    if arrivee not in precedent:
+        return None, 0
     chemin = [arrivee]
     while chemin[-1] != depart:
         chemin.append(precedent[chemin[-1]])
-    return chemin[::-1]
+    return chemin[::-1], distance[arrivee]
 
 
 def repondre(message):
     if message["type"] == "GET_CITY":
-        return {"type": "CITY", "noeuds": NOEUDS, "routes": ROUTES}
+        return {"type": "CITY", "noeuds": NOEUDS, "routes": ROUTES, "lieux": LIEUX, "rues": RUES}
     if message["type"] == "COMPUTE_ROUTE":
         for nom in (message["depart"], message["arrivee"]):
             if nom not in NOEUDS:
                 return {"type": "ERROR", "raison": f"noeud inconnu : {nom}"}
-        chemin = chemin_le_plus_court(message["depart"], message["arrivee"])
-        distance = (len(chemin) - 1) * ECART
-        return {"type": "ROUTE", "chemin": chemin, "distance": distance,
+        chemin, distance = chemin_le_plus_court(message["depart"], message["arrivee"])
+        if chemin is None:
+            return {"type": "ERROR", "raison": "aucun chemin entre ces deux points"}
+        return {"type": "ROUTE", "chemin": chemin, "distance": round(distance, 1),
                 "temps": round(distance / VITESSE, 1)}
     return {"type": "ERROR", "raison": f"type inconnu : {message['type']}"}
 
 
 def main():
     ecoute = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    ecoute.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if os.name != "nt":
+        # Sous Linux : relancer tout de suite sans "Address already in use".
+        # Pas sous Windows : là-bas, ça permettrait à DEUX serveurs d'écouter sur le même port.
+        ecoute.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     ecoute.bind(("0.0.0.0", PORT_TCP))
     ecoute.listen()
     print(f"Faux serveur en écoute sur le port {PORT_TCP} (Ctrl+C pour arrêter)")

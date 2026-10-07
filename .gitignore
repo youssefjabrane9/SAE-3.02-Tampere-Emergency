@@ -223,3 +223,6 @@ __pycache__/
 *.docx
 .vscode/
 .idea/
+
+# Données OpenStreetMap brutes (19 Mo), gardées seulement en local
+assets/map.osm

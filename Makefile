@@ -19,7 +19,7 @@ endif
 .DEFAULT_GOAL := help
 
 # Ces cibles ne sont pas des fichiers à fabriquer, juste des noms de commandes
-.PHONY: help installer client serveur faux-serveur tests processus arreter commit
+.PHONY: help installer client serveur faux-serveur tests processus arreter commit ville
 
 help:
 	@echo Commandes disponibles :
@@ -31,7 +31,8 @@ help:
 	@echo   make tests          lance les tests unittest
 	@echo   make processus      affiche les serveurs et clients en cours
 	@echo   make arreter        arrete tous les serveurs et clients du projet
-	@echo   make commit         demande un message puis fait git add + commit + push
+	@echo   make ville          regenere assets/colmar.json depuis assets/colmar_osm.json
+	@echo   make commit        demande un message puis fait git add + commit + push
 
 installer:
 	$(PYTHON_SYSTEME) -m venv .venv
@@ -59,3 +60,6 @@ arreter:
 
 commit:
 	@$(PYTHON) outils/commit.py
+
+ville:
+	$(PYTHON) -m outils.extraire_osm
