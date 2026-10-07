@@ -2,7 +2,7 @@
 
     python -m outils.faux_serveur
 
-Ville 6 x 6 (A1 à F6, 100 m entre deux carrefours). Le trajet est un simple parcours en
+Ville 3 x 3 (A1 à C3, 100 m entre deux carrefours). Le trajet est un simple parcours en
 largeur (le moins de carrefours), pas le vrai calcul de Youssef. Plusieurs clients possibles.
 """
 
@@ -11,13 +11,13 @@ import socket
 
 from sae.protocole import PORT_TCP, Deframeur, encoder
 
-COLONNES = "ABCDEF"
-LIGNES = range(1, 7)
+COLONNES = "ABC"
+LIGNES = range(1, 4)
 ECART = 100          # mètres entre deux carrefours
 VITESSE = 13.9       # m/s (50 km/h)
 
 NOEUDS = {f"{c}{l}": [i * ECART, (l - 1) * ECART] for i, c in enumerate(COLONNES) for l in LIGNES}
-ROUTES = ([[f"{c}{l}", f"{c}{l + 1}", ECART] for c in COLONNES for l in LIGNES if l < 6]
+ROUTES = ([[f"{c}{l}", f"{c}{l + 1}", ECART] for c in COLONNES for l in LIGNES if l < len(LIGNES)]
           + [[f"{a}{l}", f"{b}{l}", ECART] for a, b in zip(COLONNES, COLONNES[1:]) for l in LIGNES])
 
 
