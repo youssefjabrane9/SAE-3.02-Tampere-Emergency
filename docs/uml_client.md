@@ -11,7 +11,7 @@ classDiagram
     class QThread
 
     class FenetrePrincipale {
-        +CarteVille carte
+        +Carte carte
         +ClientReseau reseau
         +QComboBox choix_depart
         +QComboBox choix_arrivee
@@ -28,11 +28,11 @@ classDiagram
         +closeEvent(event)
     }
 
-    class CarteVille {
+    class Carte {
         +dict positions
         +list items_trajets
-        +charger_ville(message)
-        +afficher_trajet(message, couleur)
+        +dessiner_ville(message)
+        +dessiner_chemin(chemin, couleur)
         +effacer_trajets()
         +ajuster()
         +resizeEvent(event)
@@ -72,10 +72,10 @@ classDiagram
     }
 
     QMainWindow <|-- FenetrePrincipale
-    QGraphicsView <|-- CarteVille
+    QGraphicsView <|-- Carte
     QThread <|-- ClientReseau
 
-    FenetrePrincipale *-- CarteVille : contient
+    FenetrePrincipale *-- Carte : contient
     FenetrePrincipale o-- "1" ClientReseau : utilise
     ClientReseau ..> Deframeur : crée dans run()
     ClientReseau ..> protocole : encoder()
@@ -100,7 +100,7 @@ sequenceDiagram
     R->>S: GET_CITY
     S->>R: CITY
     R-->>F: signal message_recu(CITY)
-    F->>F: afficher_ville() → carte.charger_ville()
+    F->>F: afficher_ville() → carte.dessiner_ville()
 
     U->>F: clic « Calculer »
     F->>R: envoyer(COMPUTE_ROUTE)
@@ -108,7 +108,7 @@ sequenceDiagram
     alt nœuds valides
         S->>R: ROUTE
         R-->>F: signal message_recu(ROUTE)
-        F->>F: afficher_route() → carte.afficher_trajet()
+        F->>F: afficher_route() → carte.dessiner_chemin()
     else nœud inconnu
         S->>R: ERROR
         R-->>F: signal message_recu(ERROR)

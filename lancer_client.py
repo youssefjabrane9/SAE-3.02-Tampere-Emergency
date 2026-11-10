@@ -19,8 +19,7 @@ def main():
     app = QApplication(sys.argv)
     reseau = ClientReseau(hote, PORT_TCP)
     fenetre = FenetrePrincipale(reseau)
-    fenetre.resize(1000, 700)
-    fenetre.show()
+    fenetre.showMaximized()            # plein écran : la carte est plus lisible
     sys.exit(app.exec())
 
 
