@@ -27,11 +27,11 @@ Python 3.13 peut être installé à côté d'un Python 3.14 : `py -3.13` choisit
 
 ```powershell
 winget install Git.Git        # puis fermer et rouvrir PowerShell
-git clone https://github.com/panda-eating-banana/302.git
-cd 302
+git clone https://github.com/youssefjabrane9/SAE-3.02-Tampere-Emergency.git
+cd SAE-3.02-Tampere-Emergency
 ```
 
-Sans git : sur GitHub, **Code → Download ZIP**, puis extraire le ZIP et ouvrir PowerShell dans le dossier.
+Sans git : sur GitHub, **Code → Download ZIP**, puis extraire le ZIP et ouvrir PowerShell dans le dossier `SAE-3.02-Tampere-Emergency-main`.
 
 ## 3. Créer l'environnement Python et installer les paquets
 

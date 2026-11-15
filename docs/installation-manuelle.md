@@ -25,8 +25,8 @@ sudo apt install -y libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-keysy
 ## 2. Télécharger le projet
 
 ```bash
-git clone https://github.com/panda-eating-banana/302.git
-cd 302
+git clone https://github.com/youssefjabrane9/SAE-3.02-Tampere-Emergency.git
+cd SAE-3.02-Tampere-Emergency
 ```
 
 ## 3. Créer l'environnement Python et installer les dépendances
