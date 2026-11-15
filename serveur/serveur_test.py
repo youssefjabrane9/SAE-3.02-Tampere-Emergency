@@ -6,67 +6,92 @@ from pathlib import Path
 
 from sae.protocole import Deframeur, encoder
 
-
-# 1. Charger les donnees de Colmar
+# Charger la carte de Colmar
 fichier = Path(__file__).resolve().parent.parent / "assets" / "colmar.json"
 
 with open(fichier, "r", encoding="utf-8") as f:
     ville = json.load(f)
 
-
-# 2. Construire le graphe des routes
-# en respectant les sens uniques
-
+# Construire le graphe des routes
 graphe = {}
+sens_uniques = {(a, b) for a, b in ville["sens_uniques"]}
+feux = set(ville["feux"])
 
-sens_uniques = {
-    (depart, arrivee)
-    for depart, arrivee in ville["sens_uniques"]
-}
+for a, b, longueur in ville["routes"]:
+    graphe.setdefault(a, []).append((b, longueur))
 
-for depart, arrivee, distance in ville["routes"]:
-
-    # Ajouter le sens indique dans les donnees
-    graphe.setdefault(depart, []).append((arrivee, distance))
-
-    # Ajouter le sens inverse uniquement si la route
-    # n'est pas declaree a sens unique
-    if (depart, arrivee) not in sens_uniques:
-        graphe.setdefault(arrivee, []).append((depart, distance))
+    if (a, b) not in sens_uniques:
+        graphe.setdefault(b, []).append((a, longueur))
 
 
-# 3. Algorithme de Dijkstra
-def dijkstra(depart, arrivee):
+# Niveau de trafic selon l'heure
+def niveau_trafic(heure):
+    if 7 <= heure <= 9 or 17 <= heure <= 19:
+        return "fort"
 
-    distances = {depart: 0}
+    if 10 <= heure <= 16:
+        return "moyen"
+
+    return "faible"
+
+
+# Calculer le temps sur une route
+def temps_route(a, b, longueur, heure, strategie):
+    temps = longueur / 10
+
+    if strategie == "classique":
+        return temps
+
+    # Simulation de routes chargees
+    route_chargee = (int(a) + int(b)) % 3 == 0
+
+    if route_chargee:
+        if niveau_trafic(heure) == "fort":
+            temps *= 2
+        elif niveau_trafic(heure) == "moyen":
+            temps *= 1.4
+
+    # Attente aux feux
+    if b in feux:
+        if strategie == "prioritaire":
+            temps += 3
+        else:
+            temps += 20
+
+    return temps
+
+
+# Algorithme de Dijkstra
+def dijkstra(depart, arrivee, heure, strategie):
+    couts = {depart: 0}
     precedents = {}
     file = [(0, depart)]
 
     while file:
+        cout, noeud = heapq.heappop(file)
 
-        distance, noeud = heapq.heappop(file)
-
-        if distance > distances.get(noeud, float("inf")):
+        if cout > couts.get(noeud, float("inf")):
             continue
 
         if noeud == arrivee:
             break
 
         for voisin, longueur in graphe.get(noeud, []):
-
-            nouvelle_distance = distance + longueur
-
-            if nouvelle_distance < distances.get(voisin, float("inf")):
-
-                distances[voisin] = nouvelle_distance
-                precedents[voisin] = noeud
-
-                heapq.heappush(
-                    file,
-                    (nouvelle_distance, voisin)
+            if strategie == "classique":
+                poids = longueur
+            else:
+                poids = temps_route(
+                    noeud, voisin, longueur, heure, strategie
                 )
 
-    if arrivee not in distances:
+            nouveau = cout + poids
+
+            if nouveau < couts.get(voisin, float("inf")):
+                couts[voisin] = nouveau
+                precedents[voisin] = noeud
+                heapq.heappush(file, (nouveau, voisin))
+
+    if arrivee not in couts:
         return None
 
     chemin = [arrivee]
@@ -76,112 +101,161 @@ def dijkstra(depart, arrivee):
 
     chemin.reverse()
 
-    return distances[arrivee], chemin
+    distance = 0
+    temps = 0
+
+    for a, b in zip(chemin, chemin[1:]):
+        longueur = next(
+            l for voisin, l in graphe[a] if voisin == b
+        )
+
+        distance += longueur
+        temps += temps_route(
+            a, b, longueur, heure, strategie
+        )
+
+    return {
+        "chemin": chemin,
+        "distance": round(distance, 1),
+        "temps": round(temps, 1)
+    }
 
 
-# 4. Creer le serveur TCP
-serveur = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+# Calculer les trois strategies
+def calculer_strategies(depart, arrivee, heure):
+    resultats = {}
 
-serveur.setsockopt(
-    socket.SOL_SOCKET,
-    socket.SO_REUSEADDR,
-    1
-)
+    for nom in ("classique", "trafic", "prioritaire"):
+        resultats[nom] = dijkstra(
+            depart, arrivee, heure, nom
+        )
 
-serveur.bind(("127.0.0.1", 5050))
-
-serveur.listen()
-
-print("Serveur demarre sur le port 5050")
-print("Carte de Colmar chargee")
-print("Gestion des sens uniques active")
+    return resultats
 
 
-# 5. Communication avec le client
-try:
+# Traiter les messages du client
+def traiter_message(message):
 
-    while True:
+    if message.get("type") == "GET_CITY":
+        return {
+            "type": "CITY",
+            "noeuds": ville["noeuds"],
+            "routes": ville["routes"],
+            "lieux": ville["lieux"],
+            "rues": ville["rues"]
+        }
 
-        client, adresse = serveur.accept()
-
-        print("Client connecte :", adresse)
-
-        deframeur = Deframeur()
+    if message.get("type") == "COMPUTE_ROUTE":
+        depart = message.get("depart")
+        arrivee = message.get("arrivee")
 
         try:
+            heure = int(message.get("heure", 8))
+        except (ValueError, TypeError):
+            heure = -1
 
-            while True:
+        if depart not in ville["noeuds"] or arrivee not in ville["noeuds"]:
+            return {
+                "type": "ERROR",
+                "raison": "Depart ou arrivee inconnu"
+            }
 
-                donnees = client.recv(4096)
+        if not 0 <= heure <= 23:
+            return {
+                "type": "ERROR",
+                "raison": "Heure invalide"
+            }
 
-                if not donnees:
-                    break
+        resultats = calculer_strategies(
+            depart, arrivee, heure
+        )
 
-                for message in deframeur.alimenter(donnees):
+        if any(r is None for r in resultats.values()):
+            return {
+                "type": "ERROR",
+                "raison": "Aucun trajet trouve"
+            }
 
-                    print("Message recu :", message["type"])
+        classique = resultats["classique"]
 
-                    # Envoyer la carte de Colmar
-                    if message["type"] == "GET_CITY":
+        print("Trajets calcules pour", heure, "h")
 
-                        reponse = {
-                            "type": "CITY",
-                            "noeuds": ville["noeuds"],
-                            "routes": ville["routes"],
-                            "lieux": ville["lieux"],
-                            "rues": ville["rues"]
-                        }
+        for nom, resultat in resultats.items():
+            print(
+                nom,
+                ":",
+                resultat["distance"],
+                "m,",
+                resultat["temps"],
+                "s"
+            )
 
-                    # Calculer un itineraire
-                    elif message["type"] == "COMPUTE_ROUTE":
+        return {
+            "type": "ROUTE",
+            "chemin": classique["chemin"],
+            "distance": classique["distance"],
+            "temps": classique["temps"],
+            "strategies": resultats,
+            "trafic": niveau_trafic(heure)
+        }
 
-                        depart = message["depart"]
-                        arrivee = message["arrivee"]
+    return {
+        "type": "ERROR",
+        "raison": "Commande non disponible"
+    }
 
-                        resultat = dijkstra(depart, arrivee)
 
-                        if resultat is None:
+# Demarrer le serveur TCP
+def lancer_serveur():
+    serveur = socket.socket(
+        socket.AF_INET,
+        socket.SOCK_STREAM
+    )
 
-                            reponse = {
-                                "type": "ERROR",
-                                "raison": "Aucun trajet trouve"
-                            }
+    serveur.setsockopt(
+        socket.SOL_SOCKET,
+        socket.SO_REUSEADDR,
+        1
+    )
 
-                        else:
+    serveur.bind(("127.0.0.1", 5050))
+    serveur.listen()
 
-                            distance, chemin = resultat
+    print("Serveur demarre sur le port 5050")
+    print("Carte de Colmar chargee")
+    print("Trois strategies disponibles")
 
-                            reponse = {
-                                "type": "ROUTE",
-                                "chemin": chemin,
-                                "distance": round(distance, 1),
-                                "temps": round(distance / 10, 1)
-                            }
+    try:
+        while True:
+            client, adresse = serveur.accept()
+            print("Client connecte :", adresse)
 
-                            print(
-                                "Trajet calcule :",
-                                round(distance, 1),
-                                "m"
-                            )
+            deframeur = Deframeur()
 
-                    else:
+            try:
+                while True:
+                    donnees = client.recv(4096)
 
-                        reponse = {
-                            "type": "ERROR",
-                            "raison": "Commande non disponible"
-                        }
+                    if not donnees:
+                        break
 
-                    client.sendall(encoder(reponse))
+                    for message in deframeur.alimenter(donnees):
+                        reponse = traiter_message(message)
+                        client.sendall(encoder(reponse))
 
-        finally:
+            except (OSError, ValueError, KeyError) as erreur:
+                print("Erreur client :", erreur)
 
-            client.close()
-            print("Client deconnecte")
+            finally:
+                client.close()
+                print("Client deconnecte")
 
-except KeyboardInterrupt:
+    except KeyboardInterrupt:
+        print("Arret du serveur")
 
-    print("Arret du serveur")
+    finally:
+        serveur.close()
 
-finally:
 
-    serveur.close()
+if __name__ == "__main__":
+    lancer_serveur()
