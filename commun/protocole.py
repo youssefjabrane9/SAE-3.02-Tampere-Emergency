@@ -10,7 +10,7 @@ TCP (PORT_TCP) : client <-> serveur.
     Pourquoi le '\\n' ? TCP est un flux d'octets : un recv() peut renvoyer
     un demi-message, ou deux messages collés. Le '\\n' marque la fin de chaque message.
 
-UDP (PORT_UDP) : véhicule (OBU) <-> carrefour connecté (RSU), à partir de l'étape 7.
+UDP (PORT_UDP) : véhicule (OBU) <-> carrefour connecté (RSU).
     Un datagramme = un objet JSON. Pas besoin de '\\n' : UDP garde les frontières des messages.
 
 Tout message est un dict qui contient au moins la clé "type".
@@ -27,7 +27,7 @@ PORT_UDP = 5051
 # Si vous ajoutez un champ, ajoutez-le ici D'ABORD, puis dans le code.
 # ---------------------------------------------------------------------------
 
-# Étape 4-5 : la carte et un itinéraire --------------------------------------
+# Les premiers messages du contrat : la carte et un itinéraire ---------------
 
 EXEMPLE_GET_CITY = {"type": "GET_CITY"}                          # client -> serveur
 
@@ -41,10 +41,10 @@ EXEMPLE_COMPUTE_ROUTE = {                                         # client -> se
     "type": "COMPUTE_ROUTE",
     "depart": "A1",
     "arrivee": "B2",
-    "heure": 8,              # 0 à 23, utilisé à partir de l'étape 6
+    "heure": 8,              # 0 à 23
 }
 
-EXEMPLE_ROUTE = {                                                 # serveur -> client
+EXEMPLE_ROUTE = {                                                 # serveur -> client (premier prototype)
     "type": "ROUTE",
     "chemin": ["A1", "A2", "B2"],
     "distance": 200,         # mètres
@@ -53,32 +53,43 @@ EXEMPLE_ROUTE = {                                                 # serveur -> c
 
 EXEMPLE_ERROR = {"type": "ERROR", "raison": "noeud inconnu : Z9"}  # serveur -> client
 
-# Étape 6 : vous remplacerez sans doute ROUTE par ROUTES (3 stratégies), par exemple :
-#   {"type": "ROUTES", "classique": {...}, "trafic": {...}, "priorite": {...}}
-
-# Étape 7 (UDP) : à compléter ensemble quand vous y serez, par exemple :
-#   PRIORITY_REQUEST (véhicule -> carrefour), PRIORITY_GRANT / PRIORITY_DENY (carrefour -> véhicule)
+# Messages ajoutés ensuite (utilisés par le code, pas encore dans TYPES_CONNUS) :
+#   TCP : ROUTES remplace ROUTE : {"type": "ROUTES", "classique": {...}, "trafic": {...}, "priorite": {...}}
+#         GET_TRAFFIC / TRAFFIC (densité de chaque route à une heure), GET_HISTORY / HISTORY (historique SQLite)
+#   UDP : PRIORITY_REQUEST (véhicule -> carrefour), PRIORITY_GRANT / PRIORITY_DENY (carrefour -> véhicule)
 
 TYPES_CONNUS = {"GET_CITY", "CITY", "COMPUTE_ROUTE", "ROUTE", "ERROR"}
 
 
 # ---------------------------------------------------------------------------
-# Fonctions à écrire vous-mêmes. Les tests de test_protocole.py disent quand c'est bon.
+# Encodage, décodage et découpage des trames.
 # ---------------------------------------------------------------------------
 
 def encoder(message):
-    """dict -> octets prêts à envoyer en TCP (JSON + '\\n', en UTF-8).
+    """Transforme un message en octets prêts à envoyer en TCP.
 
-    Indice : json.dumps(...), puis ajouter "\\n", puis .encode("utf-8").
+    Le message est écrit en JSON, suivi de '\\n' (fin de trame), puis encodé en UTF-8.
+
+    Args:
+        message (dict): message du protocole, avec au moins la clé "type".
+
+    Returns:
+        bytes: la trame à passer à sendall().
     """
     return (json.dumps(message) + "\n").encode("utf-8")
 
 
 def decoder(ligne):
-    """octets d'UNE trame (sans le '\\n') -> dict.
+    """Transforme UNE trame reçue (sans son '\\n') en message.
 
-    Doit lever ValueError si ce n'est pas un dict ou s'il n'y a pas de clé "type".
-    Indice : .decode("utf-8"), puis json.loads(...), puis vérifier.
+    Args:
+        ligne (bytes): les octets d'une trame, ou d'un datagramme UDP.
+
+    Returns:
+        dict: le message décodé.
+
+    Raises:
+        ValueError: si ce n'est pas du JSON, pas un dict, ou s'il manque la clé "type".
     """
     message = json.loads(ligne.decode("utf-8"))
     if not isinstance(message, dict) or "type" not in message:
@@ -87,23 +98,38 @@ def decoder(ligne):
 
 
 class Deframeur:
-    """Reconstitue les messages à partir de morceaux reçus par recv().
+    """Reconstitue les messages à partir des morceaux reçus par recv().
 
-    Utilisation (côté client comme côté serveur, un Deframeur par connexion) :
+    TCP est un flux : un recv() peut renvoyer un demi-message ou deux messages collés.
+    On garde donc un tampon, et on ne rend que les messages complets (finis par '\\n').
+    Un Deframeur par connexion, côté client comme côté serveur::
+
         d = Deframeur()
         for msg in d.alimenter(sock.recv(4096)):
             traiter(msg)
+
+    Attributes:
+        tampon (bytes): octets reçus qui ne forment pas encore un message complet.
     """
 
     def __init__(self):
+        """Crée un déframeur avec un tampon vide."""
         self.tampon = b""
 
     def alimenter(self, octets):
-        """Ajoute les octets reçus au tampon et renvoie la liste des messages COMPLETS.
+        """Ajoute les octets reçus au tampon et renvoie les messages complets.
 
         Ce qui reste après le dernier '\\n' (un message pas encore fini) reste dans le tampon
         pour le prochain appel.
-        Indice : tant que b"\\n" est dans le tampon, couper avec .split(b"\\n", 1).
+
+        Args:
+            octets (bytes): ce que recv() vient de renvoyer.
+
+        Returns:
+            list[dict]: les messages complets, dans l'ordre d'arrivée (liste vide s'il n'y en a pas).
+
+        Raises:
+            ValueError: si une trame complète n'est pas un message valide (voir decoder()).
         """
         self.tampon += octets
         messages = []

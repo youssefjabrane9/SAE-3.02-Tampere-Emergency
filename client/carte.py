@@ -5,7 +5,7 @@ La fenêtre appelle :
     colorer_trafic(densites)     avec les "densites" d'un message "TRAFFIC"
     dessiner_chemin(chemin, mode)
     animer(trajets)              pour faire rouler les véhicules sur leurs chemins
-    accorder_priorite(feu)       quand un carrefour accorde la priorité (étape 7)
+    accorder_priorite(feu)       quand un carrefour accorde la priorité
 Une horloge (QTimer) tourne en permanence : les feux suivent leur cycle vert / rouge.
 La carte prévient la fenêtre avec le signal feu_proche quand le véhicule prioritaire
 approche d'un feu : c'est la fenêtre qui envoie la demande en UDP.
@@ -50,7 +50,7 @@ PERIODE_MS = 40
 ACCELERATION = 20
 ANTICIPATION = 10      # le véhicule prioritaire demande le feu vert 10 s (simulées) avant d'y être
 
-# Feux : chaque feu fait 30 s vert puis 30 s rouge (même règle que le serveur, outils/faux_serveur.py)
+# Feux : chaque feu fait 30 s vert puis 30 s rouge (affichage de la carte)
 CYCLE_FEU = 60
 DUREE_VERT = 30
 
@@ -59,29 +59,67 @@ Z_FOND, Z_ROUTE, Z_TRAJET, Z_FEU, Z_LIEU, Z_MARQUEUR, Z_VEHICULE = -1, 0, 1, 2, 
 
 
 def en_minutes(secondes):
-    """336.7 -> "5 min 37 s" (le protocole donne des secondes, on affiche des minutes)."""
+    """Écrit une durée en minutes et secondes, par exemple 336.7 -> "5 min 37 s".
+
+    Args:
+        secondes (float): la durée en secondes (unité du protocole).
+
+    Returns:
+        str: la durée lisible.
+    """
     minutes, reste = divmod(round(secondes), 60)
     return f"{minutes} min {reste:02d} s"
 
 
 def feu_vert(feu, t):
-    """Le feu est-il vert à l'instant t ? Le cycle est décalé selon l'identifiant du feu,
-    pour que les feux ne changent pas tous en même temps."""
+    """Dit si un feu est vert à un instant donné.
+
+    Le cycle est décalé selon l'identifiant du feu, pour que les feux ne changent pas tous
+    en même temps. Ce cycle sert seulement à l'affichage : le serveur, lui, compte une attente
+    fixe à chaque feu (20 s, ou 3 s pour le véhicule prioritaire).
+
+    Args:
+        feu (str): identifiant du noeud du feu.
+        t (float): instant en secondes simulées.
+
+    Returns:
+        bool: True si le feu est vert.
+    """
     return (t + int(feu)) % CYCLE_FEU < DUREE_VERT
 
 
 def stylo(couleur, epaisseur):
-    """Crayon pour tracer une ligne, aux bouts arrondis (pas de "trous" dans les virages)."""
+    """Crée un crayon pour tracer une ligne aux bouts arrondis (pas de "trous" dans les virages).
+
+    Args:
+        couleur (str | QColor): couleur du trait.
+        epaisseur (float): épaisseur du trait, en mètres.
+
+    Returns:
+        QPen: le crayon.
+    """
     crayon = QPen(QColor(couleur), epaisseur)
     crayon.setCapStyle(Qt.PenCapStyle.RoundCap)
     return crayon
 
 
 class Carte(QGraphicsView):
-    noeud_clique = pyqtSignal(str)     # clic sur la carte : le noeud de rue le plus proche
+    """Vue de la ville : rues, lieux, feux, trajets et véhicules animés.
+
+    Une unité de la scène = 1 mètre. Une horloge (QTimer) fait tourner les feux et avancer
+    les véhicules.
+
+    Attributes:
+        noeud_clique (pyqtSignal(str)): émis au clic, avec le noeud le plus proche du clic.
+        feu_proche (pyqtSignal(str)): émis quand le véhicule prioritaire approche d'un feu.
+        positions (dict[str, list[float]]): noeud -> [x, y] en mètres.
+        t (float): horloge de la ville, en secondes simulées.
+    """
+    noeud_clique = pyqtSignal(str)     # clic sur la carte : le noeud le plus proche
     feu_proche = pyqtSignal(str)       # le véhicule prioritaire approche de ce feu
 
     def __init__(self):
+        """Crée une scène vide et l'horloge des feux (démarrée par dessiner_ville())."""
         super().__init__()
         self.setScene(QGraphicsScene(self))
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -98,14 +136,35 @@ class Carte(QGraphicsView):
         self.minuterie.timeout.connect(self.avancer)
 
     def rond(self, x, y, rayon, couleur, z):
-        """Ajoute un rond coloré à bord blanc, centré sur (x, y)."""
+        """Ajoute un rond coloré à bord blanc, centré sur (x, y).
+
+        Args:
+            x (float): abscisse du centre, en mètres.
+            y (float): ordonnée du centre, en mètres.
+            rayon (float): rayon en mètres.
+            couleur (str): couleur de remplissage.
+            z (int): ordre d'affichage (le plus grand est dessiné par-dessus).
+
+        Returns:
+            QGraphicsEllipseItem: le rond ajouté à la scène.
+        """
         item = self.scene().addEllipse(x - rayon, y - rayon, 2 * rayon, 2 * rayon,
                                        QPen(Qt.GlobalColor.white, 6), QBrush(QColor(couleur)))
         item.setZValue(z)
         return item
 
     def ligne(self, a, b, crayon, z):
-        """Ajoute une ligne entre les noeuds a et b."""
+        """Ajoute une ligne entre deux noeuds.
+
+        Args:
+            a (str): noeud de départ.
+            b (str): noeud d'arrivée.
+            crayon (QPen): couleur et épaisseur du trait.
+            z (int): ordre d'affichage.
+
+        Returns:
+            QGraphicsLineItem: la ligne ajoutée à la scène.
+        """
         x1, y1 = self.positions[a]
         x2, y2 = self.positions[b]
         item = self.scene().addLine(x1, y1, x2, y2, crayon)
@@ -115,7 +174,11 @@ class Carte(QGraphicsView):
     # --- La ville ---
 
     def dessiner_ville(self, message):
-        """Dessine la ville à partir d'un message "CITY" (reçu une seule fois)."""
+        """Dessine la ville (fond de carte, rues, feux, lieux) et démarre l'horloge des feux.
+
+        Args:
+            message (dict): message "CITY" du serveur, avec "noeuds", "routes", "lieux" et "feux".
+        """
         self.positions = message["noeuds"]
 
         fond = self.scene().addPixmap(QPixmap(str(IMAGE_FOND)))
@@ -126,8 +189,8 @@ class Carte(QGraphicsView):
         for a, b, _longueur in message["routes"]:
             self.lignes_routes[(a, b)] = self.ligne(a, b, stylo(gris, EPAISSEUR_ROUTE), Z_ROUTE)
 
-        # Les vrais feux de Colmar ("feux" est un champ proposé : il peut manquer)
-        for noeud in message.get("feux", []):
+        # Les vrais feux de Colmar
+        for noeud in message["feux"]:
             x, y = self.positions[noeud]
             self.feux[noeud] = self.rond(x, y, RAYON_FEU, "red", Z_FEU)
         self.minuterie.start(PERIODE_MS)       # l'horloge tourne : les feux changent de couleur
@@ -147,7 +210,11 @@ class Carte(QGraphicsView):
         self.fitInView(self.scene().itemsBoundingRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def colorer_trafic(self, densites):
-        """Colore chaque route selon son trafic. densites : [[a, b, densité de 0 à 1], ...]."""
+        """Colore chaque route selon son trafic : vert (fluide), orange (chargé), rouge (bouché).
+
+        Args:
+            densites (list[list]): [[a, b, densité de 0 à 1], ...], champ "densites" du message "TRAFFIC".
+        """
         for a, b, densite in densites:
             if densite < 0.3:
                 couleur = QColor(46, 125, 50, 170)     # vert : fluide
@@ -158,14 +225,23 @@ class Carte(QGraphicsView):
             self.lignes_routes[(a, b)].setPen(stylo(couleur, EPAISSEUR_ROUTE))
 
     def resizeEvent(self, event):
-        """La fenêtre change de taille : on refait tenir toute la ville dedans."""
+        """Refait tenir toute la ville dans la vue quand la fenêtre change de taille.
+
+        Args:
+            event (QResizeEvent): événement envoyé par Qt.
+        """
         super().resizeEvent(event)
         self.fitInView(self.scene().itemsBoundingRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     # --- Trajets et véhicules ---
 
     def dessiner_chemin(self, chemin, mode):
-        """Trace un chemin (liste de noeuds) avec la couleur et l'épaisseur de sa stratégie."""
+        """Trace un chemin avec la couleur et l'épaisseur de sa stratégie.
+
+        Args:
+            chemin (list[str]): les noeuds du trajet, dans l'ordre.
+            mode (str): "classique", "trafic" ou "priorite".
+        """
         crayon = stylo(COULEURS_MODE[mode], EPAISSEURS_MODE[mode])
         for a, b in zip(chemin, chemin[1:]):
             self.lignes_trajets.append(self.ligne(a, b, crayon, Z_TRAJET))
@@ -182,31 +258,43 @@ class Carte(QGraphicsView):
         self.feux_forces.clear()
 
     def accorder_priorite(self, feu):
-        """Le carrefour a accordé la priorité : ce feu laisse passer le véhicule prioritaire
-        (et lui seul : les 3 trajets sont 3 simulations séparées) jusqu'à son passage."""
+        """Ouvre un feu pour le véhicule prioritaire seulement, jusqu'à son passage (halo bleu).
+
+        Args:
+            feu (str): identifiant du feu, reçu dans PRIORITY_GRANT.
+        """
         if feu in self.feux:
             self.feux_forces.add(feu)
 
     def animer(self, trajets):
-        """Fait rouler un véhicule par trajet. trajets : {mode: (chemin, temps_noeuds)}.
+        """Fait rouler un véhicule par trajet, en repartant de l'instant 0.
 
-        temps_noeuds[i] = [arrivée, départ] : les instants (en s) où le véhicule arrive au
-        noeud chemin[i] et en repart. Ils sont différents seulement à un feu rouge.
-        L'horloge repart de 0 : c'est l'instant 0 des temps envoyés par le serveur.
+        Args:
+            trajets (dict[str, tuple]): {mode: (chemin, temps_noeuds)}. temps_noeuds[i] vaut
+                [arrivée, départ] au noeud chemin[i], en secondes ; les deux diffèrent seulement
+                à un feu rouge.
         """
         for mode, (chemin, temps_noeuds) in trajets.items():
             # Rond dessiné autour de (0, 0) : setPos(x, y) le déplace ensuite en (x, y)
             rond = self.rond(0, 0, RAYON_VEHICULE, COULEURS_MODE[mode], Z_VEHICULE)
-            rond.setPos(*self.positions[chemin[0]])
+            x, y = self.positions[chemin[0]]
+            rond.setPos(x, y)
             self.vehicules.append((mode, rond, chemin, temps_noeuds))
         self.t = 0
 
     def position(self, chemin, temps_noeuds, t):
-        """Où est le véhicule à l'instant t ?
+        """Calcule où se trouve un véhicule à l'instant t.
 
-        - en route vers le noeud i (t avant son arrivée) : on le place sur le segment,
-          à la bonne proportion (k = 0 au noeud précédent, 1 au noeud i) ;
-        - entre l'arrivée et le départ du noeud i : il attend au feu rouge.
+        En route vers le noeud i, il est placé sur le segment à la bonne proportion ;
+        entre l'arrivée et le départ du noeud i, il attend au feu rouge.
+
+        Args:
+            chemin (list[str]): les noeuds du trajet.
+            temps_noeuds (list[list[float]]): [arrivée, départ] pour chaque noeud.
+            t (float): instant en secondes simulées.
+
+        Returns:
+            tuple[float, float]: la position (x, y) en mètres.
         """
         for i in range(1, len(chemin)):
             t1 = temps_noeuds[i - 1][1]                 # départ du noeud précédent
@@ -221,8 +309,15 @@ class Carte(QGraphicsView):
         return self.positions[chemin[-1]]               # t dépasse la fin : il est arrivé
 
     def chercher_feux(self, chemin, temps_noeuds):
-        """Feux du véhicule prioritaire : demande le vert quand il arrive dans moins de
-        ANTICIPATION s (signal feu_proche), et rend le feu à son cycle une fois passé."""
+        """Gère les feux du véhicule prioritaire.
+
+        Émet feu_proche quand il arrive à un feu dans moins de ANTICIPATION secondes
+        (une seule demande par feu), et rend le feu à son cycle normal une fois passé.
+
+        Args:
+            chemin (list[str]): les noeuds du trajet prioritaire.
+            temps_noeuds (list[list[float]]): [arrivée, départ] pour chaque noeud.
+        """
         for noeud, (arrivee, depart) in zip(chemin, temps_noeuds):
             if noeud not in self.feux:
                 continue
@@ -233,7 +328,7 @@ class Carte(QGraphicsView):
                 self.feux_forces.discard(noeud)         # véhicule passé : cycle normal
 
     def avancer(self):
-        """Appelée par la minuterie : avance l'horloge, colore les feux, déplace les véhicules."""
+        """Appelée par l'horloge : avance le temps, colore les feux et déplace les véhicules."""
         self.t += PERIODE_MS / 1000 * ACCELERATION
         for feu, rond in self.feux.items():
             # Couleur = cycle normal, pour TOUS les véhicules (même pendant la priorité)
@@ -245,25 +340,40 @@ class Carte(QGraphicsView):
                 rond.setPen(QPen(Qt.GlobalColor.white, 6))
         # Un véhicule arrivé reste à la fin de son chemin (position() le place là)
         for mode, rond, chemin, temps_noeuds in self.vehicules:
-            rond.setPos(*self.position(chemin, temps_noeuds, self.t))
+            x, y = self.position(chemin, temps_noeuds, self.t)
+            rond.setPos(x, y)
             if mode == "priorite":
                 self.chercher_feux(chemin, temps_noeuds)
 
     # --- Départ / arrivée ---
 
     def marquer(self, role, noeud):
-        """Place (ou déplace) le marqueur "depart" ou "arrivee". noeud=None : l'enlève."""
+        """Place, déplace ou enlève le marqueur de départ ou d'arrivée.
+
+        Args:
+            role (str): "depart" ou "arrivee".
+            noeud (str | None): noeud où placer le marqueur ; None l'enlève.
+        """
         if role in self.marqueurs:
             self.scene().removeItem(self.marqueurs.pop(role))
         if noeud is not None:
             x, y = self.positions[noeud]
             self.marqueurs[role] = self.rond(x, y, RAYON_MARQUEUR, COULEURS_MARQUEUR[role], Z_MARQUEUR)
 
-    def noeud_le_plus_proche(self, x, y):
-        return min(self.positions, key=lambda n: math.dist(self.positions[n], (x, y)))
-
     def mousePressEvent(self, event):
-        """Clic sur la carte : on envoie le noeud de rue le plus proche du clic."""
-        if self.positions:
-            point = self.mapToScene(event.position().toPoint())    # pixels de l'écran -> mètres
-            self.noeud_clique.emit(self.noeud_le_plus_proche(point.x(), point.y()))
+        """Clic sur la carte : émet noeud_clique avec le noeud le plus proche du clic.
+
+        Args:
+            event (QMouseEvent): événement envoyé par Qt (position en pixels de l'écran).
+        """
+        if not self.positions:
+            return                                  # la ville n'est pas encore chargée
+        point = self.mapToScene(event.position().toPoint())    # pixels de l'écran -> mètres
+        plus_proche = None
+        distance_min = None
+        for noeud, (x, y) in self.positions.items():
+            distance = math.dist((x, y), (point.x(), point.y()))
+            if distance_min is None or distance < distance_min:
+                plus_proche = noeud
+                distance_min = distance
+        self.noeud_clique.emit(plus_proche)

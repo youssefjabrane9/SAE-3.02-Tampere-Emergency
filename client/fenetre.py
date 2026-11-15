@@ -1,72 +1,84 @@
 """Fenêtre principale du client : choix du trajet à gauche, carte de la ville à droite.
 
 Départ : l'hôpital ou le commissariat.
-Arrivée : une adresse (rue ou lieu) ou un clic sur la carte.
+Arrivée : un lieu (gare, musée...) ou une rue choisi dans une liste, ou un clic sur la carte.
 La fenêtre ne connaît que des messages du protocole (des dict) :
 - en TCP, elle reçoit par traiter_message() : "CITY", "TRAFFIC", "ROUTES", "HISTORY", "ERROR"
   et envoie par self.reseau.envoyer() : "GET_CITY", "GET_TRAFFIC", "COMPUTE_ROUTE", "GET_HISTORY" ;
-- en UDP (étape 7), elle envoie "PRIORITY_REQUEST" aux carrefours par self.v2i.envoyer()
+- en UDP, elle envoie "PRIORITY_REQUEST" aux carrefours par self.v2i.envoyer()
   et reçoit leur réponse par reponse_carrefour() : "PRIORITY_GRANT" ou "PRIORITY_DENY".
 """
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QComboBox, QFormLayout, QHBoxLayout, QLabel, QMainWindow,
-                             QMessageBox, QPushButton, QSpinBox, QWidget)
+                             QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from client.carte import MODES, NOMS_MODE, Carte, en_minutes
 from client.graphiques import GraphiqueTemps
 from client.reseau import ClientV2I
-from sae.protocole import PORT_UDP
+from commun.protocole import PORT_UDP
 
 # Les véhicules d'urgence partent d'un de ces lieux (noms de "lieux" dans le message CITY)
 DEPARTS = ["Hôpital Pasteur", "Commissariat de police"]
-TEXTE_CLIC = "point choisi sur la carte"     # écrit dans le champ Arrivée après un clic
+TEXTE_CLIC = "Point cliqué sur la carte"    # 1re ligne de la liste Arrivée
 
 
 class FenetrePrincipale(QMainWindow):
+    """Fenêtre principale : formulaire du trajet à gauche, carte de Colmar à droite.
+
+    Elle ne connaît que des messages du protocole (des dict), reçus et envoyés par
+    ClientReseau (TCP) et ClientV2I (UDP).
+
+    Attributes:
+        reseau (ClientReseau): liaison TCP avec le serveur.
+        v2i (ClientV2I): liaison UDP avec les carrefours.
+        carte (Carte): la carte de la ville.
+    """
     def __init__(self, reseau):
+        """Crée les widgets, branche les signaux et démarre les deux threads réseau.
+
+        Args:
+            reseau (ClientReseau): liaison TCP, pas encore démarrée.
+        """
         super().__init__()
         self.setWindowTitle("SAÉ 3.02 — Véhicules prioritaires")
         self.reseau = reseau
-        self.point_clique = None                   # dernier noeud cliqué sur la carte
-        self.noms = {}                             # noeud -> nom de lieu ou de rue (pour l'historique)
+        self.noms = {}                             # noeud -> nom du lieu ou de la rue (pour l'historique)
         self.v2i = ClientV2I(reseau.hote, PORT_UDP)   # UDP vers les carrefours, même machine que le serveur
 
         # --- Widgets ---
         self.carte = Carte()
         self.choix_depart = QComboBox()
         self.choix_arrivee = QComboBox()
-        self.choix_arrivee.setEditable(True)       # on peut taper : "bru" propose "Rue Bruat"
-        self.choix_arrivee.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)   # le texte tapé n'ajoute rien
-        self.choix_arrivee.completer().setFilterMode(Qt.MatchFlag.MatchContains)  # cherche partout dans le nom
-        self.choix_arrivee.lineEdit().setPlaceholderText("adresse ou clic sur la carte")
         self.choix_heure = QSpinBox()
         self.choix_heure.setRange(0, 23)
         self.choix_heure.setValue(8)
         self.choix_heure.setSuffix(" h")
         self.bouton_calculer = QPushButton("Calculer")
         self.bouton_calculer.setEnabled(False)     # tant que la ville n'est pas chargée
-        self.bouton_effacer = QPushButton("Effacer")
         self.bouton_historique = QPushButton("Historique")
         self.resultat = QLabel("—")
         self.resultat.setWordWrap(True)
-        legende = QLabel("Trafic : vert = fluide, orange = chargé, rouge = bouché")
-        legende.setWordWrap(True)
+        # Légende sur une ligne : un carré de la couleur des routes devant chaque mot (QLabel comprend le HTML)
+        legende = QLabel('Trafic : <span style="color:#2e7d32">■</span> fluide  '
+                         '<span style="color:#f57c00">■</span> chargé  '
+                         '<span style="color:#d32f2f">■</span> bouché')
         self.graphique = GraphiqueTemps()
 
-        # --- Disposition : formulaire à gauche, carte à droite ---
+        # --- Disposition : panneau à gauche (formulaire puis le reste en colonne), carte à droite ---
         formulaire = QFormLayout()
         formulaire.addRow("Départ", self.choix_depart)
         formulaire.addRow("Arrivée", self.choix_arrivee)
         formulaire.addRow("Heure", self.choix_heure)
-        formulaire.addRow(legende)
-        formulaire.addRow(self.bouton_calculer)
-        formulaire.addRow(self.bouton_effacer)
-        formulaire.addRow(self.bouton_historique)
-        formulaire.addRow(self.resultat)
-        formulaire.addRow(self.graphique)
+        colonne = QVBoxLayout()                    # chaque widget prend la hauteur dont il a besoin
+        colonne.addLayout(formulaire)
+        colonne.addWidget(legende)
+        colonne.addWidget(self.bouton_calculer)
+        colonne.addWidget(self.bouton_historique)
+        colonne.addWidget(self.resultat)
+        colonne.addWidget(self.graphique)
+        colonne.addStretch()                       # l'espace en trop va en bas, pas entre les widgets
         panneau = QWidget()
-        panneau.setLayout(formulaire)
+        panneau.setLayout(colonne)
         panneau.setFixedWidth(300)
 
         disposition = QHBoxLayout()
@@ -78,16 +90,13 @@ class FenetrePrincipale(QMainWindow):
 
         # --- Signaux ---
         self.bouton_calculer.clicked.connect(self.calculer)
-        self.bouton_effacer.clicked.connect(self.effacer)
         self.choix_heure.valueChanged.connect(self.demander_trafic)
-        # Les marqueurs suivent ce qui est choisi (None enlève le marqueur)
-        self.choix_depart.currentIndexChanged.connect(
-            lambda: self.carte.marquer("depart", self.choix_depart.currentData()))
-        self.choix_arrivee.currentTextChanged.connect(
-            lambda: self.carte.marquer("arrivee", self.lire_arrivee()))
+        # Les marqueurs suivent ce qui est choisi dans les listes
+        self.choix_depart.currentIndexChanged.connect(self.marquer_depart)
+        self.choix_arrivee.currentIndexChanged.connect(self.marquer_arrivee)
         self.carte.noeud_clique.connect(self.choisir_point)
         self.carte.feu_proche.connect(self.demander_priorite)
-        self.bouton_historique.clicked.connect(lambda: self.reseau.envoyer({"type": "GET_HISTORY"}))
+        self.bouton_historique.clicked.connect(self.demander_historique)
         self.v2i.message_recu.connect(self.reponse_carrefour)
         self.v2i.start()
 
@@ -96,21 +105,29 @@ class FenetrePrincipale(QMainWindow):
         self.reseau.connecte.connect(self.quand_connecte)
         self.reseau.message_recu.connect(self.traiter_message)
         self.reseau.erreur.connect(self.afficher_erreur)
-        self.reseau.finished.connect(lambda: self.bouton_calculer.setEnabled(False))  # thread terminé
+        self.reseau.finished.connect(self.quand_deconnecte)    # le thread TCP s'est terminé
         self.statusBar().showMessage(f"Connexion à {self.reseau.hote}:{self.reseau.port}…")
         self.reseau.start()
 
     # --- Messages reçus ---
 
     def quand_connecte(self):
+        """Connexion établie : l'affiche en bas de la fenêtre et demande la ville (GET_CITY)."""
         self.statusBar().showMessage(f"Connecté à {self.reseau.hote}:{self.reseau.port}")
         self.reseau.envoyer({"type": "GET_CITY"})
 
-    def traiter_message(self, message):
-        """Aiguille chaque message reçu selon son "type".
+    def quand_deconnecte(self):
+        """Le thread TCP s'est terminé : on ne peut plus calculer de trajet."""
+        self.bouton_calculer.setEnabled(False)
 
-        try : avec PyQt6, une erreur dans une méthode appelée par un signal FERME l'appli.
-        Un message incomplet (un champ qui manque...) affiche donc juste une erreur.
+    def traiter_message(self, message):
+        """Aiguille chaque message reçu du serveur selon son "type".
+
+        Avec PyQt6, une erreur dans une méthode appelée par un signal ferme l'application :
+        un message incomplet affiche donc seulement une erreur.
+
+        Args:
+            message (dict): "CITY", "TRAFFIC", "ROUTES", "HISTORY" ou "ERROR".
         """
         try:
             if message["type"] == "CITY":
@@ -127,24 +144,42 @@ class FenetrePrincipale(QMainWindow):
             self.afficher_erreur(f"message {message['type']} incomplet ({e})")
 
     def afficher_ville(self, message):
+        """Dessine la ville, remplit les listes Départ et Arrivée, puis demande le trafic.
+
+        La liste Arrivée contient : la ligne du point cliqué (vide tant qu'on n'a pas cliqué),
+        puis les lieux, un trait, et les rues (chaque partie dans l'ordre alphabétique).
+
+        Args:
+            message (dict): message "CITY", avec "lieux" et "rues" (nom -> noeud).
+        """
         self.carte.dessiner_ville(message)
+        lieux = message["lieux"]
+        rues = message["rues"]
         for nom in DEPARTS:
-            self.choix_depart.addItem(nom, message["lieux"][nom])   # le noeud est caché derrière le nom
-        adresses = {**message["lieux"], **message["rues"]}         # nom -> noeud
-        for nom in sorted(adresses):
-            self.choix_arrivee.addItem(nom, adresses[nom])
-        self.choix_arrivee.setCurrentIndex(-1)     # champ vide au départ
+            self.choix_depart.addItem(nom, lieux[nom])     # le noeud est caché derrière le nom
+        self.choix_arrivee.addItem(TEXTE_CLIC, None)       # None : pas encore de clic
+        for nom in sorted(lieux):
+            self.choix_arrivee.addItem(nom, lieux[nom])
+        self.choix_arrivee.insertSeparator(self.choix_arrivee.count())   # trait entre lieux et rues
+        for nom in sorted(rues):
+            self.choix_arrivee.addItem(nom, rues[nom])
+        self.choix_arrivee.setCurrentIndex(1)              # le premier lieu, pas la ligne du clic
         # L'inverse (noeud -> nom), pour l'historique. Les lieux en dernier : si un lieu et
-        # une rue ont le même noeud, on garde "Hôpital Pasteur" plutôt que le nom de sa rue.
-        for nom, noeud in message["rues"].items():
-            self.noms[noeud] = nom
-        for nom, noeud in message["lieux"].items():
-            self.noms[noeud] = nom
+        # une rue ont le même noeud, on garde le nom du lieu (ex. "Hôpital Pasteur").
+        for nom in sorted(rues):
+            self.noms[rues[nom]] = nom
+        for nom in sorted(lieux):
+            self.noms[lieux[nom]] = nom
         self.bouton_calculer.setEnabled(True)
         self.demander_trafic()
 
     def afficher_routes(self, message):
-        """Les 3 trajets (message "ROUTES") : chemins en couleur, véhicules animés, graphique."""
+        """Affiche les 3 trajets : chemins en couleur, temps, gain de la priorité, graphique et véhicules.
+
+        Args:
+            message (dict): message "ROUTES", avec un trajet par stratégie ("chemin", "distance",
+                "temps", "temps_noeuds").
+        """
         self.carte.effacer_trajets()
         lignes = []
         for mode in MODES:
@@ -159,10 +194,19 @@ class FenetrePrincipale(QMainWindow):
                            for mode in MODES})
 
     def afficher_erreur(self, texte):
+        """Affiche une erreur dans la zone des résultats.
+
+        Args:
+            texte (str): la phrase à afficher.
+        """
         self.resultat.setText(f"Erreur : {texte}")
 
     def afficher_historique(self, simulations):
-        """Les 10 dernières simulations enregistrées par le serveur, dans une petite fenêtre."""
+        """Montre les 10 dernières simulations dans une petite fenêtre.
+
+        Args:
+            simulations (list[dict]): champ "simulations" du message "HISTORY".
+        """
         lignes = []
         for s in simulations[-10:]:
             depart = self.noms.get(s["depart"], "point de la carte")
@@ -171,63 +215,71 @@ class FenetrePrincipale(QMainWindow):
                           f"trafic {en_minutes(s['trafic'])}, priorité {en_minutes(s['priorite'])}")
         QMessageBox.information(self, "Historique", "\n".join(lignes) or "Aucune simulation pour l'instant.")
 
-    # --- Étape 7 : priorité aux feux (UDP) ---
+    # --- Priorité aux feux (UDP) ---
 
     def demander_priorite(self, feu):
-        """Le véhicule prioritaire approche d'un feu : il demande le vert au carrefour."""
+        """Le véhicule prioritaire approche d'un feu : demande le vert au carrefour en UDP.
+
+        Args:
+            feu (str): identifiant du feu.
+        """
         self.v2i.envoyer({"type": "PRIORITY_REQUEST", "feu": feu})
 
     def reponse_carrefour(self, message):
-        """Réponse UDP d'un carrefour : si la priorité est accordée, son feu passe au vert."""
+        """Traite la réponse UDP d'un carrefour : si la priorité est accordée, ouvre le feu.
+
+        Args:
+            message (dict): "PRIORITY_GRANT" ou "PRIORITY_DENY".
+        """
         if message["type"] == "PRIORITY_GRANT":
             self.carte.accorder_priorite(message.get("feu"))
 
     # --- Actions de l'utilisateur ---
 
     def demander_trafic(self):
-        """Demande au serveur le trafic de l'heure choisie (au chargement et à chaque changement)."""
+        """Demande au serveur le trafic de l'heure choisie (GET_TRAFFIC)."""
         self.reseau.envoyer({"type": "GET_TRAFFIC", "heure": self.choix_heure.value()})
 
+    def demander_historique(self):
+        """Bouton Historique : demande au serveur les simulations passées (GET_HISTORY)."""
+        self.reseau.envoyer({"type": "GET_HISTORY"})
+
+    def marquer_depart(self):
+        """Place le marqueur de départ sur le lieu choisi dans la liste Départ."""
+        self.carte.marquer("depart", self.choix_depart.currentData())
+
+    def marquer_arrivee(self):
+        """Place le marqueur d'arrivée sur le lieu ou la rue choisi dans la liste Arrivée."""
+        self.carte.marquer("arrivee", self.choix_arrivee.currentData())
+
     def choisir_point(self, noeud):
-        """Clic sur la carte : ce point de rue devient l'arrivée."""
-        self.point_clique = noeud
-        self.choix_arrivee.setEditText(TEXTE_CLIC)
-        self.carte.marquer("arrivee", noeud)       # même si le texte était déjà TEXTE_CLIC
+        """Clic sur la carte : range le noeud dans la ligne « Point cliqué » et la sélectionne.
 
-    def lire_arrivee(self):
-        """Traduit le texte du champ Arrivée en noeud, ou None si on ne le comprend pas.
-
-        2 cas : le point cliqué, ou une adresse de la liste.
+        Args:
+            noeud (str): noeud le plus proche du clic.
         """
-        texte = self.choix_arrivee.currentText()
-        if texte == TEXTE_CLIC:
-            return self.point_clique
-        index = self.choix_arrivee.findText(texte)
-        if index >= 0:
-            return self.choix_arrivee.itemData(index)
-        return None                                 # texte qui n'est pas dans la liste
+        self.choix_arrivee.setItemData(0, noeud)
+        self.choix_arrivee.setCurrentIndex(0)
+        self.marquer_arrivee()     # utile si la ligne était déjà sélectionnée (2e clic)
 
     def calculer(self):
-        arrivee = self.lire_arrivee()
-        if arrivee is None:
-            self.afficher_erreur("arrivée inconnue : choisissez une adresse de la liste "
-                                 "ou cliquez sur la carte")
+        """Bouton Calculer : envoie COMPUTE_ROUTE au serveur avec le départ, l'arrivée et l'heure."""
+        if self.choix_arrivee.currentData() is None:
+            self.afficher_erreur("cliquez d'abord sur la carte, ou choisissez une arrivée dans la liste")
             return
         self.reseau.envoyer({
             "type": "COMPUTE_ROUTE",
-            "depart": self.choix_depart.currentData(),   # l'identifiant du noeud, pas le nom
-            "arrivee": arrivee,
+            "depart": self.choix_depart.currentData(),     # l'identifiant du noeud, pas le nom
+            "arrivee": self.choix_arrivee.currentData(),
             "heure": self.choix_heure.value(),
         })
 
-    def effacer(self):
-        """Bouton Effacer : enlève les trajets, les véhicules, les résultats et le graphique."""
-        self.carte.effacer_trajets()
-        self.resultat.setText("—")
-        self.graphique.afficher({})
-
     def closeEvent(self, event):
-        """À la fermeture : arrêter proprement les deux threads réseau avant de quitter."""
+        """À la fermeture : arrête proprement les deux threads réseau avant de quitter.
+
+        Args:
+            event (QCloseEvent): événement envoyé par Qt.
+        """
         for liaison in (self.reseau, self.v2i):
             liaison.arreter()
             liaison.wait()

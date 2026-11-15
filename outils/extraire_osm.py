@@ -19,7 +19,14 @@ LARGEUR = 2579                     # mètres couverts par l'image, d'ouest en es
 
 
 def mercator(lat):
-    """Position verticale d'une latitude sur une carte Mercator (sans unité)."""
+    """Donne la position verticale d'une latitude sur une carte Mercator.
+
+    Args:
+        lat (float): latitude en degrés.
+
+    Returns:
+        float: position sans unité (à multiplier par ECHELLE pour avoir des mètres).
+    """
     return math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
 
 
@@ -27,7 +34,15 @@ ECHELLE = LARGEUR / math.radians(EST - OUEST)    # mètres par unité de carte
 
 
 def en_metres(lat, lon):
-    """(lat, lon) -> (x, y) en mètres depuis le coin haut-gauche de l'image."""
+    """Convertit une position GPS en mètres depuis le coin haut-gauche de l'image.
+
+    Args:
+        lat (float): latitude en degrés.
+        lon (float): longitude en degrés.
+
+    Returns:
+        tuple[float, float]: (x, y) en mètres, arrondis au décimètre.
+    """
     x = math.radians(lon - OUEST) * ECHELLE
     y = (mercator(NORD) - mercator(lat)) * ECHELLE
     return round(x, 1), round(y, 1)
@@ -51,15 +66,38 @@ LIEUX = {
 
 
 def dans_image(x, y):
+    """Dit si un point est dans le fond de carte assets/colmar.png.
+
+    Args:
+        x (float): abscisse en mètres.
+        y (float): ordonnée en mètres.
+
+    Returns:
+        bool: True si le point est dans l'image.
+    """
     return 0 <= x <= LARGEUR and 0 <= y <= HAUTEUR
 
 
 def plus_proche(noeuds, x, y):
-    """Identifiant du noeud le plus proche du point (x, y)."""
+    """Trouve le noeud le plus proche d'un point.
+
+    Args:
+        noeuds (dict[str, tuple]): noeud -> (x, y) en mètres.
+        x (float): abscisse en mètres.
+        y (float): ordonnée en mètres.
+
+    Returns:
+        str: l'identifiant du noeud.
+    """
     return min(noeuds, key=lambda n: math.hypot(noeuds[n][0] - x, noeuds[n][1] - y))
 
 
 def extraire():
+    """Lit assets/colmar_osm.json et construit la ville du projet.
+
+    Returns:
+        dict: "noeuds", "routes" (avec longueur), "sens_uniques", "feux", "lieux" et "rues".
+    """
     elements = json.loads((DOSSIER / "colmar_osm.json").read_text(encoding="utf-8"))["elements"]
 
     positions = {}

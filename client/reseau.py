@@ -1,6 +1,6 @@
 """Réseau du client, chaque liaison dans un thread à part (QThread) :
 - ClientReseau : TCP vers le serveur (ville, trafic, trajets, historique) ;
-- ClientV2I : UDP vers les carrefours, pour demander le feu vert (étape 7).
+- ClientV2I : UDP vers les carrefours, pour demander le feu vert.
 
 Pourquoi un thread ? recv() attend que des données arrivent : dans le thread de l'IHM,
 la fenêtre serait figée pendant ce temps.
@@ -14,15 +14,33 @@ import socket
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from sae.protocole import Deframeur, decoder, encoder
+from commun.protocole import Deframeur, decoder, encoder
 
 
 class ClientReseau(QThread):
+    """Liaison TCP entre le client et le serveur, dans un thread à part (QThread).
+
+    Le thread ne touche jamais à l'IHM : il émet des signaux, que Qt exécute dans le thread
+    de la fenêtre.
+
+    Attributes:
+        connecte (pyqtSignal): émis quand la connexion au serveur est établie.
+        message_recu (pyqtSignal(dict)): émis pour chaque message complet reçu, déjà décodé.
+        erreur (pyqtSignal(str)): émis en cas de problème réseau, avec une phrase pour l'utilisateur.
+        hote (str): adresse IP ou nom du serveur.
+        port (int): port TCP du serveur.
+    """
     connecte = pyqtSignal()            # la connexion au serveur est établie
     message_recu = pyqtSignal(dict)    # un message complet est arrivé (déjà décodé)
     erreur = pyqtSignal(str)           # problème réseau, avec une phrase pour l'utilisateur
 
     def __init__(self, hote, port):
+        """Prépare la liaison, sans se connecter (la connexion se fait dans run()).
+
+        Args:
+            hote (str): adresse IP ou nom du serveur, par exemple "192.168.56.10".
+            port (int): port TCP du serveur (PORT_TCP).
+        """
         super().__init__()
         self.hote = hote
         self.port = port
@@ -30,7 +48,10 @@ class ClientReseau(QThread):
         self.actif = True
 
     def run(self):
-        """Code exécuté dans le thread (lancé par start())."""
+        """Code du thread, lancé par start() : se connecte puis lit les messages jusqu'à l'arrêt.
+
+        select() attend au plus 0,2 s, pour revérifier régulièrement si arreter() a été appelée.
+        """
         try:
             self.sock = socket.create_connection((self.hote, self.port), timeout=5)
         except OSError as e:
@@ -58,7 +79,13 @@ class ClientReseau(QThread):
             self.sock.close()
 
     def envoyer(self, message):
-        """Appelée depuis la fenêtre. Un seul thread écrit, un seul lit : sendall() est sûr ici."""
+        """Envoie un message au serveur (appelée depuis la fenêtre).
+
+        Un seul thread écrit et un seul lit : sendall() est sûr ici.
+
+        Args:
+            message (dict): message du protocole, par exemple {"type": "GET_CITY"}.
+        """
         if self.sock is None:
             self.erreur.emit("pas connecté au serveur")
             return
@@ -68,19 +95,29 @@ class ClientReseau(QThread):
             self.erreur.emit(f"envoi impossible ({e})")
 
     def arreter(self):
-        """Demande au thread de s'arrêter (il sort de sa boucle en moins de 0,2 s)."""
+        """Demande au thread de s'arrêter : il sort de sa boucle en moins de 0,2 s."""
         self.actif = False
 
 
 class ClientV2I(QThread):
-    """Liaison UDP entre le véhicule prioritaire et les carrefours (V2I, étape 7).
+    """Liaison UDP entre le véhicule prioritaire et les carrefours (V2I).
 
-    Même principe que ClientReseau : un thread qui attend les réponses et les émet en signal.
-    Mais en UDP il n'y a ni connexion ni Deframeur : un datagramme = un message JSON entier.
+    Même principe que ClientReseau : un thread attend les réponses et les émet en signal.
+    En UDP, il n'y a ni connexion ni Deframeur : un datagramme = un message JSON entier.
+
+    Attributes:
+        message_recu (pyqtSignal(dict)): réponse d'un carrefour (PRIORITY_GRANT ou PRIORITY_DENY).
+        adresse (tuple[str, int]): adresse et port UDP des carrefours.
     """
     message_recu = pyqtSignal(dict)    # réponse d'un carrefour (PRIORITY_GRANT / PRIORITY_DENY)
 
     def __init__(self, hote, port):
+        """Crée la socket UDP, liée à un port choisi par le système.
+
+        Args:
+            hote (str): adresse des carrefours (la machine du serveur).
+            port (int): port UDP des carrefours (PORT_UDP).
+        """
         super().__init__()
         self.adresse = (hote, port)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -88,6 +125,7 @@ class ClientV2I(QThread):
         self.actif = True
 
     def run(self):
+        """Code du thread : attend les réponses des carrefours et les émet, jusqu'à l'arrêt."""
         while self.actif:
             lisibles, _, _ = select.select([self.sock], [], [], 0.2)
             if not lisibles:
@@ -102,11 +140,18 @@ class ClientV2I(QThread):
         self.sock.close()
 
     def envoyer(self, message):
-        """Envoie un datagramme (sans "\n" : UDP garde les frontières des messages)."""
+        """Envoie un datagramme aux carrefours (sans '\\n' : UDP garde les frontières des messages).
+
+        Un datagramme perdu n'arrête pas l'application : UDP ne garantit rien.
+
+        Args:
+            message (dict): par exemple {"type": "PRIORITY_REQUEST", "feu": "123"}.
+        """
         try:
             self.sock.sendto(json.dumps(message).encode("utf-8"), self.adresse)
         except OSError:
             pass        # UDP ne garantit rien : un datagramme perdu n'arrête pas l'appli
 
     def arreter(self):
+        """Demande au thread de s'arrêter : il sort de sa boucle en moins de 0,2 s."""
         self.actif = False
