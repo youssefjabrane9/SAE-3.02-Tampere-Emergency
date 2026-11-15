@@ -84,6 +84,17 @@ make installer
 make installer-client
 ```
 
+`make installer` crée l'environnement virtuel `.venv` et y installe les dépendances. Sans make, les mêmes étapes à la main :
+
+```bash
+python3 -m venv .venv                 # crée l'environnement virtuel
+source .venv/bin/activate             # l'active (à refaire dans chaque nouveau terminal)
+pip install -r requirements.txt       # installe PyQt6 et matplotlib
+```
+
+Ensuite, `python lancer_serveur.py` et `python lancer_client.py <ip du serveur>` remplacent `make serveur` et `make client`
+(détails : [Installation sans make](docs/installation-manuelle.md)).
+
 Si `sudo` répond `not in the sudoers file` ou `command not found`, voir [Erreurs fréquentes](docs/erreurs.md).
 
 ## 4. Lancer
