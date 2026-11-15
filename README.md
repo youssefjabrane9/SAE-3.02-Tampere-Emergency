@@ -68,8 +68,8 @@ Sur Ubuntu, le premier compte a déjà ce droit : rien à faire.
 
 ```bash
 sudo apt update && sudo apt install -y git make python3 python3-venv python3-pip
-git clone https://github.com/youssefjabrane9/SAE-3.02-Tampere-Emergency.git
-cd SAE-3.02-Tampere-Emergency
+git clone https://github.com/youssefjabrane9/SAE-3.02-LesNouveaux.git
+cd SAE-3.02-LesNouveaux
 ```
 
 Puis, **sur la VM serveur** :
@@ -155,7 +155,7 @@ Chaque feu que le véhicule prioritaire approche prend un **halo bleu** : la pri
 Organisation du dépôt :
 
 ```
-SAE-3.02-Tampere-Emergency/
+SAE-3.02-LesNouveaux/
 ├── lancer_client.py  lancer_serveur.py   points d'entrée (make client / make serveur)
 ├── client/     interface : fenêtre, carte, graphique, réseau TCP et UDP
 ├── serveur/    serveur_test.py : ville, calcul des trajets, carrefours UDP, historique
